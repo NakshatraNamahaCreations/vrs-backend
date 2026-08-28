@@ -17,15 +17,32 @@ import { v2 as cloudinary } from "cloudinary";
  * relative disk path in dev mode — and builds the persisted image URL from
  * that. The frontend resolveImg() handles both shapes.
  */
-const cloudinaryUrl =
-  process.env.CLOUDINARY_URL ||
+/**
+ * Parse a CLOUDINARY_URL of the form
+ *   cloudinary://<api_key>:<api_secret>@<cloud_name>
+ * into { cloud_name, api_key, api_secret }. Returns null on miss so we can
+ * fall through to the individual env vars.
+ */
+function parseCloudinaryUrl(url) {
+  if (!url) return null;
+  const m = String(url).match(/^cloudinary:\/\/([^:]+):([^@]+)@(.+)$/);
+  if (!m) return null;
+  return { api_key: m[1], api_secret: m[2], cloud_name: m[3] };
+}
+
+const cloudinaryConfig =
+  parseCloudinaryUrl(process.env.CLOUDINARY_URL) ||
   (process.env.CLOUDINARY_CLOUD_NAME &&
    process.env.CLOUDINARY_API_KEY &&
    process.env.CLOUDINARY_API_SECRET
-    ? `cloudinary://${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}@${process.env.CLOUDINARY_CLOUD_NAME}`
+    ? {
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+      }
     : null);
 
-export const usingCloudinary = Boolean(cloudinaryUrl);
+export const usingCloudinary = Boolean(cloudinaryConfig);
 
 const fileFilter = (req, file, cb) => {
   if (!/^image\/(jpe?g|png|webp|gif|avif)$/i.test(file.mimetype)) {
@@ -39,9 +56,10 @@ const limits = { fileSize: 5 * 1024 * 1024 }; // 5 MB
 let uploadImageMiddleware;
 
 if (usingCloudinary) {
-  // Cloudinary SDK auto-reads CLOUDINARY_URL from process.env. Passing an
-  // explicit config just forces https URLs in the response.
-  cloudinary.config({ secure: true });
+  // Pass credentials explicitly — relying on the SDK's env-var auto-read
+  // silently fails when only the individual CLOUDINARY_* vars are set,
+  // which surfaces as "Must supply api_key" at upload time.
+  cloudinary.config({ ...cloudinaryConfig, secure: true });
 
   const folder = process.env.CLOUDINARY_FOLDER || "vrs";
   const memoryMulter = multer({ storage: multer.memoryStorage(), fileFilter, limits });
