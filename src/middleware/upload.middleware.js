@@ -3,59 +3,29 @@ import path from "path";
 import crypto from "crypto";
 import fs from "fs";
 import { v2 as cloudinary } from "cloudinary";
-import { CloudinaryStorage } from "multer-storage-cloudinary";
 
 /**
  * Storage strategy is picked from env at startup:
- *   - CLOUDINARY_URL set  → upload straight to Cloudinary (works on serverless).
- *   - otherwise           → write to a local `uploads/` folder (nice for dev).
+ *   - CLOUDINARY_URL (or the three individual CLOUDINARY_* vars) present →
+ *     multer buffers the upload in memory, then we stream it straight to
+ *     Cloudinary and stamp req.file.path with the returned secure URL.
+ *     Works on read-only serverless filesystems (Vercel/Lambda).
+ *   - otherwise → write to a local `uploads/` folder. Nice for dev; falls
+ *     back to /tmp/uploads on Vercel just so the module doesn't crash on load.
  *
- * Both paths hand back a URL you can persist on the Product model. Disk mode
- * returns `/uploads/<file>`; Cloudinary mode returns the full https URL — the
- * frontend `resolveImg` helper already handles both.
+ * The controller reads req.file.path — full https URL in Cloudinary mode,
+ * relative disk path in dev mode — and builds the persisted image URL from
+ * that. The frontend resolveImg() handles both shapes.
  */
 const cloudinaryUrl =
   process.env.CLOUDINARY_URL ||
   (process.env.CLOUDINARY_CLOUD_NAME &&
    process.env.CLOUDINARY_API_KEY &&
-   process.env.CLOUDINARY_API_SECRET &&
-   `cloudinary://${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}@${process.env.CLOUDINARY_CLOUD_NAME}`);
+   process.env.CLOUDINARY_API_SECRET
+    ? `cloudinary://${process.env.CLOUDINARY_API_KEY}:${process.env.CLOUDINARY_API_SECRET}@${process.env.CLOUDINARY_CLOUD_NAME}`
+    : null);
 
 export const usingCloudinary = Boolean(cloudinaryUrl);
-
-let storage;
-if (usingCloudinary) {
-  // Cloudinary SDK auto-reads CLOUDINARY_URL. Setting it here in case the
-  // consumer only provided the individual vars.
-  cloudinary.config({ secure: true });
-  storage = new CloudinaryStorage({
-    cloudinary,
-    params: {
-      folder: process.env.CLOUDINARY_FOLDER || "vrs",
-      resource_type: "image",
-      allowed_formats: ["jpg", "jpeg", "png", "webp", "avif", "gif"],
-    },
-  });
-  console.log("✔ Image uploads → Cloudinary");
-} else {
-  const uploadDir = process.env.VERCEL ? "/tmp/uploads" : "uploads";
-  try {
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-  } catch (err) {
-    // Read-only filesystem (e.g. serverless without Cloudinary configured) —
-    // don't take the whole app down. Uploads will fail at request time.
-    console.warn(`Could not prepare upload dir "${uploadDir}":`, err.message);
-  }
-
-  storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const ext = (path.extname(file.originalname) || "").toLowerCase();
-      const random = crypto.randomBytes(6).toString("hex");
-      cb(null, `${Date.now()}-${random}${ext || ".bin"}`);
-    },
-  });
-}
 
 const fileFilter = (req, file, cb) => {
   if (!/^image\/(jpe?g|png|webp|gif|avif)$/i.test(file.mimetype)) {
@@ -64,8 +34,61 @@ const fileFilter = (req, file, cb) => {
   cb(null, true);
 };
 
-export const uploadImage = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
-});
+const limits = { fileSize: 5 * 1024 * 1024 }; // 5 MB
+
+let uploadImageMiddleware;
+
+if (usingCloudinary) {
+  // Cloudinary SDK auto-reads CLOUDINARY_URL from process.env. Passing an
+  // explicit config just forces https URLs in the response.
+  cloudinary.config({ secure: true });
+
+  const folder = process.env.CLOUDINARY_FOLDER || "vrs";
+  const memoryMulter = multer({ storage: multer.memoryStorage(), fileFilter, limits });
+
+  // Compose: buffer with multer → stream to Cloudinary → mutate req.file.
+  uploadImageMiddleware = {
+    single: (field) => {
+      const memoryMw = memoryMulter.single(field);
+      return (req, res, next) => {
+        memoryMw(req, res, (err) => {
+          if (err) return next(err);
+          if (!req.file) return next();
+          const stream = cloudinary.uploader.upload_stream(
+            { folder, resource_type: "image" },
+            (uploadErr, result) => {
+              if (uploadErr) return next(uploadErr);
+              // Match multer.diskStorage's shape so the controller stays agnostic.
+              req.file.path = result.secure_url;
+              req.file.filename = result.public_id;
+              req.file.cloudinary = result;
+              next();
+            }
+          );
+          stream.end(req.file.buffer);
+        });
+      };
+    },
+  };
+  console.log("✔ Image uploads → Cloudinary");
+} else {
+  const uploadDir = process.env.VERCEL ? "/tmp/uploads" : "uploads";
+  try {
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  } catch (err) {
+    console.warn(`Could not prepare upload dir "${uploadDir}":`, err.message);
+  }
+
+  const diskStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+      const ext = (path.extname(file.originalname) || "").toLowerCase();
+      const random = crypto.randomBytes(6).toString("hex");
+      cb(null, `${Date.now()}-${random}${ext || ".bin"}`);
+    },
+  });
+
+  uploadImageMiddleware = multer({ storage: diskStorage, fileFilter, limits });
+}
+
+export const uploadImage = uploadImageMiddleware;
