@@ -30,15 +30,20 @@ function parseCloudinaryUrl(url) {
   return { api_key: m[1], api_secret: m[2], cloud_name: m[3] };
 }
 
+// Env values pasted through dashboards frequently pick up leading/trailing
+// whitespace or a stray newline — Cloudinary computes signatures over the
+// exact secret so even one extra space returns "Invalid Signature".
+const trim = (v) => (typeof v === "string" ? v.trim() : v);
+
 const cloudinaryConfig =
-  parseCloudinaryUrl(process.env.CLOUDINARY_URL) ||
+  parseCloudinaryUrl(trim(process.env.CLOUDINARY_URL)) ||
   (process.env.CLOUDINARY_CLOUD_NAME &&
    process.env.CLOUDINARY_API_KEY &&
    process.env.CLOUDINARY_API_SECRET
     ? {
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
+        cloud_name: trim(process.env.CLOUDINARY_CLOUD_NAME),
+        api_key: trim(process.env.CLOUDINARY_API_KEY),
+        api_secret: trim(process.env.CLOUDINARY_API_SECRET),
       }
     : null);
 
