@@ -65,6 +65,14 @@ if (usingCloudinary) {
   // silently fails when only the individual CLOUDINARY_* vars are set,
   // which surfaces as "Must supply api_key" at upload time.
   cloudinary.config({ ...cloudinaryConfig, secure: true });
+  // Print a redacted config summary so you can confirm at a glance in Vercel
+  // logs that we're pointing at the right Cloudinary account and picked up a
+  // secret. The api_secret itself is never logged.
+  console.log(
+    `✔ Cloudinary configured — cloud=${cloudinaryConfig.cloud_name}, ` +
+    `key=${String(cloudinaryConfig.api_key || "").slice(0, 4)}…, ` +
+    `secretLen=${String(cloudinaryConfig.api_secret || "").length}`
+  );
 
   const folder = process.env.CLOUDINARY_FOLDER || "vrs";
   const memoryMulter = multer({ storage: multer.memoryStorage(), fileFilter, limits });

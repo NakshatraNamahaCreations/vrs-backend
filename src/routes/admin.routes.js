@@ -3,6 +3,7 @@ import { protectAdmin } from "../middleware/admin.middleware.js";
 
 import * as authCtrl from "../controllers/admin/auth.controller.js";
 import * as productCtrl from "../controllers/admin/product.controller.js";
+import * as categoryCtrl from "../controllers/admin/category.controller.js";
 import * as userCtrl from "../controllers/admin/user.controller.js";
 import * as orderCtrl from "../controllers/admin/order.controller.js";
 import * as enquiryCtrl from "../controllers/admin/enquiry.controller.js";
@@ -28,6 +29,11 @@ router.get("/products", productCtrl.list);
 router.post("/products", productCtrl.create);
 router.patch("/products/:id", productCtrl.update);
 router.delete("/products/:id", productCtrl.remove);
+
+router.get("/categories", categoryCtrl.list);
+router.post("/categories", categoryCtrl.create);
+router.patch("/categories/:id", categoryCtrl.update);
+router.delete("/categories/:id", categoryCtrl.remove);
 
 router.get("/users", userCtrl.list);
 router.get("/users/:id", userCtrl.detail);
