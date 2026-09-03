@@ -4,6 +4,102 @@ import { generateOtp, hashOtp, otpExpiryDate, verifyOtp } from "../utils/otp.js"
 import { sendSms, otpMessage } from "../utils/sms.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+/**
+ * POST /api/auth/signup
+ * body: { email, password, name?, phone? }
+ * Creates a customer account and issues a JWT so the client is logged in
+ * immediately on success.
+ */
+export const signup = asyncHandler(async (req, res) => {
+  const { email, password, name = "", phone = "" } = req.body || {};
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+
+  if (!EMAIL_RE.test(normalizedEmail)) {
+    return res.status(400).json({ error: "Enter a valid email address" });
+  }
+  if (!password || String(password).length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters" });
+  }
+  if (phone && !/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ error: "Phone must be a 10-digit number" });
+  }
+
+  const trimmedPhone = String(phone).trim();
+
+  // Explicit pre-checks so we can return a targeted 409 instead of relying
+  // solely on the duplicate-key error below.
+  const existingEmail = await User.findOne({ email: normalizedEmail });
+  if (existingEmail) {
+    return res.status(409).json({ error: "An account with this email already exists" });
+  }
+  if (trimmedPhone) {
+    const existingPhone = await User.findOne({ phone: trimmedPhone });
+    if (existingPhone) {
+      return res.status(409).json({
+        error: "This phone number is already linked to another account. Enter a different number.",
+      });
+    }
+  }
+
+  const user = new User({
+    email: normalizedEmail,
+    name: String(name).trim(),
+    phone: trimmedPhone,
+    lastLoginAt: new Date(),
+  });
+  await user.setPassword(password);
+
+  try {
+    await user.save();
+  } catch (err) {
+    // Race between the pre-check and save — turn Mongo's raw duplicate-key
+    // error into a friendly message so it never leaks to the UI.
+    if (err?.code === 11000) {
+      const field = Object.keys(err.keyPattern || err.keyValue || {})[0];
+      if (field === "phone") {
+        return res.status(409).json({
+          error: "This phone number is already linked to another account. Enter a different number.",
+        });
+      }
+      if (field === "email") {
+        return res.status(409).json({ error: "An account with this email already exists" });
+      }
+      return res.status(409).json({ error: "That value is already taken." });
+    }
+    throw err;
+  }
+
+  const token = signToken({ uid: user._id.toString() });
+  res.status(201).json({ ok: true, token, user: user.toPublic() });
+});
+
+/**
+ * POST /api/auth/login
+ * body: { email, password }
+ */
+export const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body || {};
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+
+  if (!EMAIL_RE.test(normalizedEmail) || !password) {
+    return res.status(400).json({ error: "Email and password are required" });
+  }
+
+  // Explicitly select the passwordHash field (schema hides it by default).
+  const user = await User.findOne({ email: normalizedEmail }).select("+passwordHash");
+  if (!user || !(await user.verifyPassword(password))) {
+    return res.status(401).json({ error: "Invalid email or password" });
+  }
+
+  user.lastLoginAt = new Date();
+  await user.save();
+
+  const token = signToken({ uid: user._id.toString() });
+  res.json({ ok: true, token, user: user.toPublic() });
+});
+
 /**
  * POST /api/auth/send-otp
  * body: { phone }
