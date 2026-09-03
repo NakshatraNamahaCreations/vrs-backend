@@ -51,8 +51,8 @@ export const list = asyncHandler(async (req, res) => {
 /** POST /api/admin/products */
 export const create = asyncHandler(async (req, res) => {
   const body = req.body || {};
-  if (!body.name || !body.category || body.price == null) {
-    return res.status(400).json({ error: "name, category and price are required" });
+  if (!body.name || !body.category) {
+    return res.status(400).json({ error: "name and category are required" });
   }
   const product = await Product.create(body);
   await ensureCategory(product.category);
