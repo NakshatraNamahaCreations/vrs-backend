@@ -6,6 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { razorpay } from "../config/razorpay.js";
 import { sendMail } from "../utils/mailer.js";
 import { renderOrderConfirmation } from "../utils/emails/orderConfirmation.js";
+import { renderOwnerOrderAlert } from "../utils/emails/ownerOrderAlert.js";
 
 /**
  * Atomically claim the next order number in the "order" sequence and format
@@ -150,8 +151,9 @@ export const verifyPayment = asyncHandler(async (req, res) => {
   // Clear the server-side cart now that payment is confirmed.
   await Cart.updateOne({ user: req.user._id }, { $set: { items: [] } });
 
-  // Send confirmation email. Wrapped so any SMTP hiccup never fails the
-  // payment-verification response — the order is confirmed either way.
+  // Send confirmation email to the customer. Wrapped so any SMTP hiccup
+  // never fails the payment-verification response — the order is confirmed
+  // either way.
   if (req.user?.email) {
     try {
       const { subject, html, text } = renderOrderConfirmation({ order, user: req.user });
@@ -159,6 +161,25 @@ export const verifyPayment = asyncHandler(async (req, res) => {
     } catch (err) {
       console.warn(
         `[email] Order confirmation to ${req.user.email} failed:`,
+        err.message
+      );
+    }
+  }
+
+  // Fire the internal ops alert to any addresses listed in ORDER_NOTIFY_EMAIL
+  // (comma-separated for multiple recipients). Also wrapped — a failed owner
+  // notification must never block the customer response.
+  const ownerRecipients = String(process.env.ORDER_NOTIFY_EMAIL || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ownerRecipients.length > 0) {
+    try {
+      const { subject, html, text } = renderOwnerOrderAlert({ order, user: req.user });
+      await sendMail({ to: ownerRecipients.join(","), subject, html, text });
+    } catch (err) {
+      console.warn(
+        `[email] Owner order alert to ${ownerRecipients.join(", ")} failed:`,
         err.message
       );
     }
