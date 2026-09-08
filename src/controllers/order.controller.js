@@ -170,13 +170,28 @@ export const verifyPayment = asyncHandler(async (req, res) => {
   // (comma-separated for multiple recipients). Also wrapped — a failed owner
   // notification must never block the customer response.
   const ownerRecipients = String(process.env.ORDER_NOTIFY_EMAIL || "")
-    .split(",")
+    .split(/[,;\s]+/) // accept commas, semicolons, or whitespace as separators
     .map((s) => s.trim())
     .filter(Boolean);
-  if (ownerRecipients.length > 0) {
+  if (ownerRecipients.length === 0) {
+    console.log(
+      `[email] ORDER_NOTIFY_EMAIL is empty — skipping owner alert for ${order.orderNumber || order._id}.`
+    );
+  } else {
     try {
       const { subject, html, text } = renderOwnerOrderAlert({ order, user: req.user });
-      await sendMail({ to: ownerRecipients.join(","), subject, html, text });
+      // Pass recipients as an array — nodemailer handles multi-recipient
+      // sends more reliably that way than with a comma-joined string.
+      const result = await sendMail({ to: ownerRecipients, subject, html, text });
+      if (result?.skipped) {
+        console.warn(
+          `[email] Owner alert skipped (${result.reason}) — recipients: ${ownerRecipients.join(", ")}`
+        );
+      } else {
+        console.log(
+          `[email] Owner alert sent to ${ownerRecipients.join(", ")} for ${order.orderNumber || order._id} (messageId=${result?.messageId})`
+        );
+      }
     } catch (err) {
       console.warn(
         `[email] Owner order alert to ${ownerRecipients.join(", ")} failed:`,

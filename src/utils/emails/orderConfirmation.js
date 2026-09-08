@@ -142,7 +142,7 @@ export function renderOrderConfirmation({ order, user }) {
           <td style="padding:28px 32px 32px;background:#f7fbfe;color:#6b7c88;font-size:13px;line-height:1.6;">
             You'll receive another update when your order ships.<br />
             Questions? Reply to this email or reach us at
-            <a href="mailto:hello@vrswaterpurifiers.in" style="color:${BRAND};text-decoration:none;">hello@vrswaterpurifiers.in</a>.
+            <a href="mailto:abhishek900815@gmail.com" style="color:${BRAND};text-decoration:none;">abhishek900815@gmail.com</a>.
           </td>
         </tr>
 
@@ -170,7 +170,7 @@ export function renderOrderConfirmation({ order, user }) {
       ? `Shipping to: ${order.shippingAddress.line1}${order.shippingAddress.line2 ? ", " + order.shippingAddress.line2 : ""}, ${order.shippingAddress.city}, ${order.shippingAddress.state} — ${order.shippingAddress.pincode}`
       : ``,
     ``,
-    `Questions? Reply to this email or reach us at hello@vrswaterpurifiers.in.`,
+    `Questions? Reply to this email or reach us at abhishek900815@gmail.com.`,
   ].join("\n");
 
   return { subject, html, text };
